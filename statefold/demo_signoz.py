@@ -176,7 +176,9 @@ async def main() -> None:
 
     try:
         await self_query_signoz(tracer)
-    except Exception as e:
+    except BaseException as e:
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise
         print(f"[self-query via SigNoz MCP] skipped: {type(e).__name__}: {e}\n")
     provider.force_flush()
 
