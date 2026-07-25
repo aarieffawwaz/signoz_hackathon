@@ -81,7 +81,7 @@ class ProxyRecorder:
             error = None
         except Exception as e:
             result, error = None, f"{type(e).__name__}: {e}"
-        latency_ms = round((time.perf_counter() - t0) * 1000, 3)
+        latency_ms = max(round((time.perf_counter() - t0) * 1000, 3), 0.001)
         await self._append(Event(
             kind="tool_call",
             payload={"name": tool_name, "args": args, "result": result, "key": key,

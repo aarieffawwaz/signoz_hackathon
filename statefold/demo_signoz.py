@@ -93,7 +93,7 @@ async def self_query_signoz(tracer) -> None:
     api_key = os.environ.get("SIGNOZ_MCP_API_KEY")
     mcp_kwargs = {"url": mcp_url, "transport": "streamable-http"}
     if api_key:
-        from mcp.client.streamable_http import StreamableHTTPClientParams
+        from agno.tools.mcp.params import StreamableHTTPClientParams
 
         mcp_kwargs = {
             "server_params": StreamableHTTPClientParams(
