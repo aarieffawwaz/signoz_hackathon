@@ -36,6 +36,24 @@ from agno.models.ollama import Ollama
 from agno.tools import tool
 from agno.tools.mcp import MCPTools
 
+
+def make_model():
+    """Pick the demo's LLM backend via DEMO_MODEL env var.
+
+    ollama (default): local, free, no API key — llama3.2:3b via Ollama.
+    gemini: Google's free tier — needs GOOGLE_API_KEY.
+    """
+    backend = os.environ.get("DEMO_MODEL", "ollama").lower()
+    if backend == "gemini":
+        from agno.models.google import Gemini
+
+        model_id = os.environ.get("GEMINI_MODEL_ID", "gemini-2.5-flash")
+        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("DEMO_MODEL=gemini requires GOOGLE_API_KEY to be set")
+        return Gemini(id=model_id, api_key=api_key), model_id
+    return Ollama(id="llama3.2:3b"), "llama3.2:3b"
+
 from statefold import InMemoryStore
 from statefold.adapters.agno import AgentStateDb
 from statefold.adapters.generic import SessionState
@@ -152,8 +170,11 @@ async def main() -> None:
     ui_port = os.environ.get("STATEFOLD_UI_PORT", "8787")
     print(f"statefold ui -> http://0.0.0.0:{ui_port} (this run's real data)\n")
 
+    model, model_id = make_model()
+    print(f"demo model -> {model_id}\n")
+
     agent = Agent(
-        model=Ollama(id="llama3.2:3b"),
+        model=model,
         db=db,
         tools=[get_weather],
         add_history_to_context=True,
@@ -174,7 +195,7 @@ async def main() -> None:
             latency_ms = round((time.perf_counter() - t0) * 1000, 2)
             print(f"Q: {q}\nA: {response.content}\n")
             await exporter.add_llm_call(
-                model="llama3.2:3b",
+                model=model_id,
                 input_tokens=len(q.split()) * 2,
                 output_tokens=len((response.content or "").split()),
                 latency_ms=latency_ms,
