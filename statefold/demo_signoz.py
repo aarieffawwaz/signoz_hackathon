@@ -125,7 +125,7 @@ async def self_query_signoz(tracer) -> None:
         mcp_kwargs = {
             "transport": "streamable-http",
             "server_params": StreamableHTTPClientParams(
-                url=mcp_url, headers={"Authorization": f"Bearer {api_key}"},
+                url=mcp_url, headers={"SIGNOZ-API-KEY": api_key},
             ),
         }
 
