@@ -179,7 +179,9 @@ async def main() -> None:
     except BaseException as e:
         if isinstance(e, (KeyboardInterrupt, SystemExit)):
             raise
-        print(f"[self-query via SigNoz MCP] skipped: {type(e).__name__}: {e}\n")
+        import traceback
+        print(f"[self-query via SigNoz MCP] skipped: {type(e).__name__}: {e}")
+        traceback.print_exc()
     provider.force_flush()
 
     print("Demo done. Check SigNoz traces for service 'statefold-demo'.")
