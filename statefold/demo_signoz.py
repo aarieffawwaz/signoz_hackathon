@@ -90,13 +90,18 @@ async def self_query_signoz(tracer) -> None:
     finds — including the errors buried under its own "successful" answers.
     """
     mcp_url = os.environ.get("SIGNOZ_MCP_URL", "http://localhost:8000/mcp")
-    headers = {}
     api_key = os.environ.get("SIGNOZ_MCP_API_KEY")
+    mcp_kwargs = {"url": mcp_url, "transport": "streamable-http"}
     if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+        from mcp.client.streamable_http import StreamableHTTPClientParams
 
-    async with MCPTools(url=mcp_url, transport="streamable-http",
-                         headers=headers or None) as mcp_tools:
+        mcp_kwargs = {
+            "server_params": StreamableHTTPClientParams(
+                url=mcp_url, headers={"Authorization": f"Bearer {api_key}"},
+            )
+        }
+
+    async with MCPTools(**mcp_kwargs) as mcp_tools:
         inspector = Agent(
             model=Ollama(id="llama3.2:3b"),
             tools=[mcp_tools],
@@ -169,7 +174,10 @@ async def main() -> None:
 
     provider.force_flush()
 
-    await self_query_signoz(tracer)
+    try:
+        await self_query_signoz(tracer)
+    except Exception as e:
+        print(f"[self-query via SigNoz MCP] skipped: {type(e).__name__}: {e}\n")
     provider.force_flush()
 
     print("Demo done. Check SigNoz traces for service 'statefold-demo'.")
