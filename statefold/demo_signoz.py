@@ -37,22 +37,31 @@ from agno.tools import tool
 from agno.tools.mcp import MCPTools
 
 
-def make_model():
-    """Pick the demo's LLM backend via DEMO_MODEL env var.
+def model_backends() -> list[str]:
+    """Which backends to run, in order, from DEMO_MODELS (comma-separated).
 
-    ollama (default): local, free, no API key — llama3.2:3b via Ollama.
-    gemini: Google's free tier — needs GOOGLE_API_KEY.
+    Defaults to just "ollama" (free, local, no API key). Set
+    DEMO_MODELS=ollama,gemini to run the same questions through both,
+    in the same session/store, so the Statefold UI's per-model cost and
+    latency breakdown compares them side by side.
     """
-    backend = os.environ.get("DEMO_MODEL", "ollama").lower()
+    raw = os.environ.get("DEMO_MODELS", os.environ.get("DEMO_MODEL", "ollama"))
+    return [b.strip().lower() for b in raw.split(",") if b.strip()]
+
+
+def make_model(backend: str):
+    """Build the model + return (model, model_id) for one backend."""
     if backend == "gemini":
         from agno.models.google import Gemini
 
         model_id = os.environ.get("GEMINI_MODEL_ID", "gemini-2.5-flash")
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            raise RuntimeError("DEMO_MODEL=gemini requires GOOGLE_API_KEY to be set")
+            raise RuntimeError("DEMO_MODELS includes gemini but GOOGLE_API_KEY is unset")
         return Gemini(id=model_id, api_key=api_key), model_id
-    return Ollama(id="llama3.2:3b"), "llama3.2:3b"
+    if backend == "ollama":
+        return Ollama(id="llama3.2:3b"), "llama3.2:3b"
+    raise ValueError(f"unknown backend {backend!r} (expected 'ollama' or 'gemini')")
 
 from statefold import InMemoryStore
 from statefold.adapters.agno import AgentStateDb
@@ -170,36 +179,39 @@ async def main() -> None:
     ui_port = os.environ.get("STATEFOLD_UI_PORT", "8787")
     print(f"statefold ui -> http://0.0.0.0:{ui_port} (this run's real data)\n")
 
-    model, model_id = make_model()
-    print(f"demo model -> {model_id}\n")
-
-    agent = Agent(
-        model=model,
-        db=db,
-        tools=[get_weather],
-        add_history_to_context=True,
-        instructions="You are a helpful weather assistant. Use the get_weather tool.",
-    )
-
     tracer = trace.get_tracer("statefold-demo")
     questions = [
         "What's the weather in Paris?",
         "What's the weather in Tokyo?",
         "What's the weather in Berlin?",
     ]
-    for q in questions:
-        with tracer.start_as_current_span("demo.user_turn") as span:
-            span.set_attribute("statefold.question", q)
-            t0 = time.perf_counter()
-            response = agent.run(q)
-            latency_ms = round((time.perf_counter() - t0) * 1000, 2)
-            print(f"Q: {q}\nA: {response.content}\n")
-            await exporter.add_llm_call(
-                model=model_id,
-                input_tokens=len(q.split()) * 2,
-                output_tokens=len((response.content or "").split()),
-                latency_ms=latency_ms,
-            )
+
+    for backend in model_backends():
+        model, model_id = make_model(backend)
+        print(f"demo model -> {model_id} ({backend})\n")
+
+        agent = Agent(
+            model=model,
+            db=db,
+            tools=[get_weather],
+            add_history_to_context=True,
+            instructions="You are a helpful weather assistant. Use the get_weather tool.",
+        )
+
+        for q in questions:
+            with tracer.start_as_current_span("demo.user_turn") as span:
+                span.set_attribute("statefold.question", q)
+                span.set_attribute("statefold.llm.model", model_id)
+                t0 = time.perf_counter()
+                response = agent.run(q)
+                latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+                print(f"Q: {q}\nA: {response.content}\n")
+                await exporter.add_llm_call(
+                    model=model_id,
+                    input_tokens=len(q.split()) * 2,
+                    output_tokens=len((response.content or "").split()),
+                    latency_ms=latency_ms,
+                )
 
     provider.force_flush()
 
