@@ -103,19 +103,26 @@ async def self_query_signoz(tracer) -> None:
         }
 
     async with MCPTools(**mcp_kwargs) as mcp_tools:
+        try:
+            tool_names = list(mcp_tools.functions.keys())
+            print(f"[self-query via SigNoz MCP] tools available: {tool_names}")
+        except Exception:
+            pass
+
         inspector = Agent(
             model=Ollama(id="llama3.2:3b"),
             tools=[mcp_tools],
             instructions=(
-                "You inspect your own recent behavior via SigNoz. Search "
-                "traces for service 'statefold-demo' from the last 15 "
-                "minutes. Report any spans with errors and what failed."
+                "You have a tool called signoz_search_traces. You MUST call "
+                "it now, with arguments service_name='statefold-demo' and "
+                "has_error=true, before writing any response. Do not write "
+                "curl commands or explain the API — call the tool directly."
             ),
         )
         with tracer.start_as_current_span("demo.self_query"):
             response = await inspector.arun(
-                "Check your own recent traces in SigNoz for service "
-                "'statefold-demo'. Did any tool calls fail?"
+                "Call signoz_search_traces now for service 'statefold-demo' "
+                "with has_error=true. Then summarize what you find."
             )
             print(f"[self-query via SigNoz MCP]\n{response.content}\n")
 
