@@ -54,7 +54,7 @@ def make_model(backend: str):
     if backend == "gemini":
         from agno.models.google import Gemini
 
-        model_id = os.environ.get("GEMINI_MODEL_ID", "gemini-2.5-flash")
+        model_id = os.environ.get("GEMINI_MODEL_ID", "gemini-2.0-flash")
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("DEMO_MODELS includes gemini but GOOGLE_API_KEY is unset")
@@ -111,7 +111,7 @@ def _record_tool_call(name, args, result, latency_ms, error) -> None:
     ))
 
 
-async def self_query_signoz(tracer) -> None:
+async def self_query_signoz(tracer, model, model_id) -> None:
     """Full-circle observability: the agent inspects its own SigNoz traces
     mid-run, via SigNoz's own MCP server (signoz-mcp), and reports what it
     finds — including the errors buried under its own "successful" answers.
@@ -136,8 +136,9 @@ async def self_query_signoz(tracer) -> None:
         except Exception:
             pass
 
+        print(f"[self-query via SigNoz MCP] using model: {model_id}")
         inspector = Agent(
-            model=Ollama(id="llama3.2:3b"),
+            model=model,
             tools=[mcp_tools],
             instructions=(
                 "You have a tool called signoz_search_traces. You MUST call "
@@ -216,7 +217,7 @@ async def main() -> None:
     provider.force_flush()
 
     try:
-        await self_query_signoz(tracer)
+        await self_query_signoz(tracer, model, model_id)
     except BaseException as e:
         if isinstance(e, (KeyboardInterrupt, SystemExit)):
             raise
