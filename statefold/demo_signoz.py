@@ -9,6 +9,10 @@ surface — but SigNoz shows the buried red ERROR span underneath the green
 root span. That's the point: correctness of the final answer says nothing
 about the health of the call underneath it.
 
+Also serves the Statefold console (statefold/ui.py) in this same process, on
+the same store — so the console shows this run's real events instead of the
+UI's built-in seeded demo data. No separate ``statefold-ui`` process needed.
+
 Run on the VPS (Ollama + SigNoz collocated):
 
     OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
@@ -18,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-import random
+import threading
 import time
 
 from opentelemetry import trace
@@ -30,11 +34,13 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from agno.agent import Agent
 from agno.models.ollama import Ollama
 from agno.tools import tool
+from agno.tools.mcp import MCPTools
 
 from statefold import InMemoryStore
 from statefold.adapters.agno import AgentStateDb
 from statefold.adapters.generic import SessionState
 from statefold.otel import OtelExporter
+from statefold.ui import build_app
 
 OTLP_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
 
@@ -78,6 +84,44 @@ def _record_tool_call(name, args, result, latency_ms, error) -> None:
     ))
 
 
+async def self_query_signoz(tracer) -> None:
+    """Full-circle observability: the agent inspects its own SigNoz traces
+    mid-run, via SigNoz's own MCP server (signoz-mcp), and reports what it
+    finds — including the errors buried under its own "successful" answers.
+    """
+    mcp_url = os.environ.get("SIGNOZ_MCP_URL", "http://localhost:8000/mcp")
+    headers = {}
+    api_key = os.environ.get("SIGNOZ_MCP_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with MCPTools(url=mcp_url, transport="streamable-http",
+                         headers=headers or None) as mcp_tools:
+        inspector = Agent(
+            model=Ollama(id="llama3.2:3b"),
+            tools=[mcp_tools],
+            instructions=(
+                "You inspect your own recent behavior via SigNoz. Search "
+                "traces for service 'statefold-demo' from the last 15 "
+                "minutes. Report any spans with errors and what failed."
+            ),
+        )
+        with tracer.start_as_current_span("demo.self_query"):
+            response = await inspector.arun(
+                "Check your own recent traces in SigNoz for service "
+                "'statefold-demo'. Did any tool calls fail?"
+            )
+            print(f"[self-query via SigNoz MCP]\n{response.content}\n")
+
+
+def _serve_ui(store) -> None:
+    import uvicorn
+
+    host = os.environ.get("STATEFOLD_UI_HOST", "0.0.0.0")
+    port = int(os.environ.get("STATEFOLD_UI_PORT", "8787"))
+    uvicorn.run(build_app(store), host=host, port=port, log_level="warning")
+
+
 async def main() -> None:
     global exporter, bridge_loop
 
@@ -90,6 +134,10 @@ async def main() -> None:
                             session="demo-session", thread="main")
     exporter = OtelExporter(session, agent="weather-bot")
     bridge_loop = SyncBridge()
+
+    threading.Thread(target=_serve_ui, args=(store,), daemon=True).start()
+    ui_port = os.environ.get("STATEFOLD_UI_PORT", "8787")
+    print(f"statefold ui -> http://0.0.0.0:{ui_port} (this run's real data)\n")
 
     agent = Agent(
         model=Ollama(id="llama3.2:3b"),
@@ -120,7 +168,14 @@ async def main() -> None:
             )
 
     provider.force_flush()
+
+    await self_query_signoz(tracer)
+    provider.force_flush()
+
     print("Demo done. Check SigNoz traces for service 'statefold-demo'.")
+    print("Statefold UI stays up on this run's real data — Ctrl+C to stop.")
+    while True:
+        await asyncio.sleep(3600)
 
 
 if __name__ == "__main__":
