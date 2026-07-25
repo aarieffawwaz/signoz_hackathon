@@ -96,9 +96,10 @@ async def self_query_signoz(tracer) -> None:
         from agno.tools.mcp.params import StreamableHTTPClientParams
 
         mcp_kwargs = {
+            "transport": "streamable-http",
             "server_params": StreamableHTTPClientParams(
                 url=mcp_url, headers={"Authorization": f"Bearer {api_key}"},
-            )
+            ),
         }
 
     async with MCPTools(**mcp_kwargs) as mcp_tools:
