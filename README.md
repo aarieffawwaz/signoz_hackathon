@@ -1,6 +1,5 @@
 # statefold
 
-[![ci](https://github.com/Joshuaakaspace/statefold/actions/workflows/ci.yml/badge.svg)](https://github.com/Joshuaakaspace/statefold/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-e3b341)](LICENSE)
 
 A framework-agnostic, event-sourced state platform for AI agents — works under
