@@ -112,6 +112,10 @@ def _record_tool_call(name, args, result, latency_ms, error) -> None:
 
 
 async def self_query_signoz(tracer, model, model_id) -> None:
+    # Gemini's stricter function-calling schema validator rejects some
+    # signoz-mcp tool schemas (array params missing "items"). Ollama is
+    # more permissive, so the self-query always uses it regardless of
+    # which model ran the main demo.
     """Full-circle observability: the agent inspects its own SigNoz traces
     mid-run, via SigNoz's own MCP server (signoz-mcp), and reports what it
     finds — including the errors buried under its own "successful" answers.
@@ -136,23 +140,37 @@ async def self_query_signoz(tracer, model, model_id) -> None:
         except Exception:
             pass
 
-        print(f"[self-query via SigNoz MCP] using model: {model_id}")
-        inspector = Agent(
-            model=model,
-            tools=[mcp_tools],
-            instructions=(
-                "You have a tool called signoz_search_traces. You MUST call "
-                "it now, with arguments service_name='statefold-demo' and "
-                "has_error=true, before writing any response. Do not write "
-                "curl commands or explain the API — call the tool directly."
-            ),
-        )
-        with tracer.start_as_current_span("demo.self_query"):
-            response = await inspector.arun(
-                "Call signoz_search_traces now for service 'statefold-demo' "
-                "with has_error=true. Then summarize what you find."
+        inspector_model_id = "llama3.2:3b"
+        print(f"[self-query via SigNoz MCP] using model: {inspector_model_id}")
+
+        for attempt in range(2):
+            inspector = Agent(
+                model=Ollama(id=inspector_model_id),
+                tools=[mcp_tools],
+                instructions=(
+                    "You have a tool called signoz_search_traces. You MUST "
+                    "call it now, with arguments service_name='statefold-demo' "
+                    "and has_error=true, before writing any response. Do not "
+                    "write curl commands or explain the API — call the tool "
+                    "directly, then summarize the real result."
+                ),
             )
-            print(f"[self-query via SigNoz MCP]\n{response.content}\n")
+            with tracer.start_as_current_span("demo.self_query") as span:
+                span.set_attribute("statefold.attempt", attempt + 1)
+                response = await inspector.arun(
+                    "Call signoz_search_traces now for service "
+                    "'statefold-demo' with has_error=true. Then summarize "
+                    "what you find."
+                )
+                content = response.content or ""
+                if "```" not in content and "curl" not in content.lower():
+                    print(f"[self-query via SigNoz MCP]\n{content}\n")
+                    return
+                print(f"[self-query via SigNoz MCP] attempt {attempt + 1} "
+                      f"hallucinated a command instead of calling the tool, "
+                      f"retrying" if attempt == 0 else "giving up")
+
+        print(f"[self-query via SigNoz MCP] (last attempt)\n{content}\n")
 
 
 def _serve_ui(store) -> None:
